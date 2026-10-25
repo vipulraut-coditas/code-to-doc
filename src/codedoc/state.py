@@ -13,6 +13,7 @@ from typing import Annotated, TypedDict
 
 class DocState(TypedDict, total=False):
     repo_path: str
+    doc_types: list[str]                                 # ids from doctypes.DOC_TYPES
     project_name: str
     stack: list[str]
     readme: str
@@ -22,8 +23,7 @@ class DocState(TypedDict, total=False):
     file_summaries: Annotated[list[dict], operator.add]  # map step 1 (parallel)
     modules: dict[str, list[dict]]                       # file summaries grouped by module
     module_summaries: Annotated[list[dict], operator.add]  # map step 2 (parallel)
-    srs: dict                                            # SRSDocument as dict
-    srs_markdown: str
+    documents: Annotated[list[dict], operator.add]       # one per doc type (parallel)
     warnings: Annotated[list[str], operator.add]
 
 
@@ -40,3 +40,14 @@ class ModuleTask(TypedDict):
     summaries: list[dict]
     project_name: str
     stack: list[str]
+
+
+class DocumentTask(TypedDict):
+    """Payload sent to one ``write_document`` branch via ``Send``."""
+    doc_type: str
+    project_name: str
+    stack: list[str]
+    readme: str
+    file_count: int
+    module_summaries: list[dict]
+    warnings: list[str]

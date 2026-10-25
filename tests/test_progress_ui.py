@@ -2,7 +2,7 @@ import io
 
 from rich.console import Console
 
-from codedoc.api import generate_srs
+from codedoc.api import generate_docs
 from codedoc.config import Settings
 from codedoc.progress_ui import ProgressUI, fmt_seconds, shorten
 
@@ -21,8 +21,8 @@ def test_progress_ui_logs_every_file_and_module(sample_repo, tmp_path, fake_llm)
     settings = Settings(backend="api", provider="anthropic", fast_model="fast-x", smart_model="smart-y")
 
     with ProgressUI(console, "fast-x", "smart-y", 3) as ui:
-        result = generate_srs(str(sample_repo), tmp_path / "s.md", settings,
-                              fast_llm=fake_llm, smart_llm=fake_llm, on_progress=ui)
+        result = generate_docs(str(sample_repo), ["srs", "api"], tmp_path / "s", settings,
+                               fast_llm=fake_llm, smart_llm=fake_llm, on_progress=ui)
 
     out = buffer.getvalue()
     for step in ("Step 1/4", "Step 2/4", "Step 3/4", "Step 4/4"):
@@ -30,5 +30,7 @@ def test_progress_ui_logs_every_file_and_module(sample_repo, tmp_path, fake_llm)
     assert "app/orders.py" in out and "app/api/routes.py" in out      # every file is logged
     assert f"[{result.files_analysed}/{result.files_analysed}]" in out  # counter reaches the end
     assert "single file, no merge needed" in out                       # module log
-    assert "1 functional + 1 non-functional" in out
+    assert "Writing 2 documents" in out
+    assert "Software Requirements Specification (SRS)" in out and "1 functional + 1 non-functional" in out
+    assert "API Documentation" in out and "1 endpoints, 1 data models" in out
     assert "secret-looking" in out

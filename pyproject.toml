@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "codedoc-agent"
 version = "0.1.0"
-description = "An AI agent that reads any code repository and writes a Business-Analyst style SRS document."
+description = "An AI agent that reads any code repository and writes software documentation: SRS, user manual, API, technical and design documents."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

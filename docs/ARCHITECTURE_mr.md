@@ -9,10 +9,11 @@
 ```
 User ──► codedoc (CLI)
            │
-           ├── wizard.py   → प्रश्न विचारतो (API key की Claude Code? कोणता LLM? models? output?)
+           ├── wizard.py   → प्रश्न विचारतो (कोणते documents? API key की Claude Code? कोणता LLM? models? output?)
            ├── config.py   → उत्तरं ~/.codedoc/config.json मध्ये save करतो
            ├── llm.py      → settings वरून योग्य LLM object बनवतो
-           └── api.py      → generate_srs() → LangGraph graph चालवतो → SRS.md लिहितो
+           ├── doctypes.py → कोणते documents बनवता येतात (SRS, User Manual, API, Technical, Design)
+           └── api.py      → generate_docs() → LangGraph graph चालवतो → निवडलेले documents लिहितो
 ```
 
 **महत्त्वाचा नियम:** फक्त `llm.py` ला माहीत असतं की कोणता provider वापरला जातोय. बाकी सगळा code फक्त `BaseChatModel` ओळखतो.
@@ -27,10 +28,18 @@ START
   → summarize_file × N    (fast model, parallel)   ← MAP
   → group_modules         (LLM नाही)  folder नुसार गट करतो
   → summarize_module × M  (fast model, parallel)   ← REDUCE (पहिला टप्पा)
-  → infer_requirements    (smart model)            ← BA सारखा विचार
-  → render_srs            (LLM नाही)  Markdown बनवतो
+  → plan_documents        (LLM नाही)  join point
+  → write_document × K    (smart model, parallel)  ← निवडलेल्या प्रत्येक document साठी एक branch
+                          (+ LLM नाही: Markdown render)
 END
 ```
+
+Repo **एकदाच** वाचली आणि summarise केली जाते; SRS, User Manual, API Doc, Technical Doc आणि
+Design Doc हे सगळे त्याच module summaries वरून लिहिले जातात. एखादा document fail झाला तरी
+बाकीचे लिहिले जातात.
+
+नवीन document type जोडायचा असेल तर: `schemas.py` मध्ये schema, `prompts.py` मध्ये prompt,
+`render.py` मध्ये renderer आणि `doctypes.py` मध्ये एक `DocType(...)` entry.
 
 ### शिकण्यासारखे concepts
 
@@ -41,7 +50,7 @@ END
 | **Node input_schema** | `add_node(..., input_schema=FileTask)` | Send ने आलेला छोटा payload (एक file) node ला मिळतो, पूर्ण state नाही. |
 | **Map-Reduce** | file → module → system | मोठी repo एका context window मध्ये बसत नाही, म्हणून ती टप्प्याटप्प्याने लहान करायची. |
 | **Dependency Injection** | `AgentDeps` | LLMs आणि cache बाहेरून दिले जातात, त्यामुळे tests मध्ये fake LLM वापरता येतो. |
-| **Deterministic steps** | `scan`, `render_srs` | जे काम साधं Python करू शकतं ते LLM कडून करून घेऊ नका. ते स्वस्त, जलद आणि अचूक असतं. |
+| **Deterministic steps** | `scan`, `render.py` | जे काम साधं Python करू शकतं ते LLM कडून करून घेऊ नका. ते स्वस्त, जलद आणि अचूक असतं. |
 
 ---
 
@@ -91,8 +100,8 @@ END
 ## ७. पुढे काय शिकू शकता (roadmap)
 
 1. **LangGraph Studio:** `langgraph dev` वापरून graph visually debug करा.
-2. **Human-in-the-loop:** `infer_requirements` नंतर `interrupt()` टाका, म्हणजे BA ने review करून मगच SRS render होईल.
+2. **Human-in-the-loop:** `write_document` नंतर `interrupt()` टाका, म्हणजे review करून मगच document save होईल.
 3. **Critic node:** smart model कडून SRS तपासून घ्या (missing requirements, duplicates) आणि loop करा.
-4. **FastAPI service:** `generate_srs()` ला REST endpoint मागे ठेवा.
-5. **GitHub Action:** प्रत्येक merge नंतर `codedoc generate . -o docs/SRS.md` आपोआप चालेल.
+4. **FastAPI service:** `generate_docs()` ला REST endpoint मागे ठेवा.
+5. **GitHub Action:** प्रत्येक merge नंतर `codedoc generate . --doc all -o docs` आपोआप चालेल.
 6. **Output formats:** Markdown वरून `.docx` किंवा PDF export.
