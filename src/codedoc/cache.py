@@ -12,7 +12,7 @@ from pathlib import Path
 
 from codedoc.config import config_dir
 
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "2"
 
 
 class SummaryCache:

@@ -184,21 +184,33 @@ class ProgressUI:
         self.progress.advance(self._task)
         self._refresh_current()
 
-    def on_requirements_start(self, modules: int) -> None:
-        self._step(4, f"Writing requirements like a Business Analyst  [dim](smart model: {escape(self.smart_model)})[/]")
-        self._print(f"  Reasoning over {modules} module summaries. This is one long call, usually 1-5 minutes...")
+    def on_documents_start(self, doc_types: list[str], modules: int) -> None:
+        count = len(doc_types)
+        self._step(4, f"Writing {count} document{'s' if count != 1 else ''}  "
+                      f"[dim](smart model: {escape(self.smart_model)})[/]")
+        self._print(f"  Reasoning over {modules} module summaries. One long call per document, "
+                    "usually 1-5 minutes each...")
         if self.plain:
             self._print("  [dim]Still working - no output until the model answers.[/]")
-        self._new_task("Thinking", None)
-        self.progress.update(self._task, current="actors, features, FR/NFR, rules, open questions")
+        self._new_task("Documents", count)
 
-    def on_requirements_done(self, requirements: int, nfrs: int, seconds: float) -> None:
-        self.progress.update(self._task, total=1, completed=1, current="")
-        self._print(f"  [green]{self.sym['ok']}[/] {requirements} functional + {nfrs} non-functional "
-                    f"requirements  [dim]{fmt_seconds(seconds)}[/]")
+    def on_document_start(self, doc_type: str, label: str) -> None:
+        self._active.append(label)
+        self._refresh_current()
 
-    def on_render_done(self) -> None:
-        if self._task is not None:
+    def on_document_done(self, doc_type: str, label: str, ok: bool, seconds: float, stats: str,
+                         error: str | None = None) -> None:
+        if label in self._active:
+            self._active.remove(label)
+        self._done += 1
+        counter = self._counter()
+        if ok:
+            self._print(f"  [green]{self.sym['ok']}[/] {counter} {escape(label)}  "
+                        f"[dim]{escape(stats)}, {fmt_seconds(seconds)}[/]")
+        else:
+            self._print(f"  [red]{self.sym['fail']}[/] {counter} {escape(label)}  [red]failed:[/] {escape(error or '')}")
+        self.progress.advance(self._task)
+        self._refresh_current()
+        if self._done == self._total:
             self.progress.update(self._task, visible=False)
-        self._print(f"  [green]{self.sym['ok']}[/] SRS document rendered  "
-                    f"[dim]total time {fmt_seconds(time.monotonic() - self._run_started)}[/]")
+            self._print(f"  [dim]total time {fmt_seconds(time.monotonic() - self._run_started)}[/]")

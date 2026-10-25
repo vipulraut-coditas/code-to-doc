@@ -1,6 +1,14 @@
-# codedoc: an AI Business Analyst for any codebase
+# codedoc: AI documentation agent for any codebase
 
-`codedoc` reads a code repository, works out what the system does for its users and the business, and writes a **Software Requirements Specification (SRS)** in Markdown, the way a Business Analyst would.
+`codedoc` reads a code repository once and writes the standard software documents you choose, in Markdown:
+
+| Document | id | File |
+|---|---|---|
+| Software Requirements Specification (SRS) | `srs` | `SRS.md` |
+| User Manual | `user_manual` | `USER_MANUAL.md` |
+| API Documentation | `api` | `API.md` |
+| Technical / Developer Documentation | `technical` | `TECHNICAL.md` |
+| Software Design Document (SDD) | `design` | `DESIGN.md` |
 
 It is built with **LangGraph** and is **LLM-agnostic**. It works with:
 
@@ -10,13 +18,23 @@ It is built with **LangGraph** and is **LLM-agnostic**. It works with:
 
 ```
 codedoc
+? Which document do you want to generate?
+    Software Requirements Specification (SRS)  -  features, functional & non-functional requirements, ...
+    User Manual  -  step-by-step guide for end users: getting started, tasks, FAQ, troubleshooting
+  > API Documentation  -  endpoints, parameters, request/response models, authentication, errors
+    Technical / Developer Documentation  -  code structure, components, setup, configuration, conventions
+    Software Design Document (SDD)  -  architecture, components, data flow, data design, design decisions
+    All documents
+    Several documents (choose with a checkbox) ...
+v Will generate: API Documentation
 ? Which project should I document? (folder path or git URL)  C:\work\my-app
 ? How do you want to connect to an LLM?
   > I have an API key (Anthropic, OpenAI, Grok, Gemini, Groq, ...)
     Use Claude Code already installed on this computer (no API key)
     Use a local model with Ollama (free, no API key)
 ...
-SRS ready!  C:\work\my-app\docs\SRS.md
+Documents ready!
+  v API Documentation   C:\work\my-app\docs\API.md
 ```
 
 ## Install
@@ -38,24 +56,25 @@ If you skip the extra, the setup wizard offers to `pip install` the right packag
 
 | Command | What it does |
 |---|---|
-| `codedoc` | Interactive. Asks for the project, the LLM settings and the output path, then generates the SRS. |
+| `codedoc` | Interactive. First asks which document to generate (one, all, or several via a checkbox), then the project, the LLM settings and the output folder. |
 | `codedoc setup` | Configure only the LLM (backend, provider, API key, fast and smart model) and save it. |
-| `codedoc generate <repo> [-o out.md]` | Runs without questions, using saved settings or environment variables. Good for CI. |
+| `codedoc generate <repo> [--doc srs,api] [-o out-dir]` | Runs without questions, using saved settings or environment variables. Good for CI. |
 | `codedoc doctor` | Shows the current settings and tests the LLM connection. |
 | `python -m codedoc` | Same as `codedoc`. |
 
-`generate` options: `--backend api\|claude-code`, `--provider`, `--fast-model`, `--smart-model`, `--max-files` (default 300), `--concurrency`, `--no-cache`, `--plain` (log lines only, no live bar; also enabled automatically when output is piped, or with `CODEDOC_PLAIN=1`).
+`generate` options: `--doc` (comma-separated ids from the table above, or `all`; default `srs`), `-o/--output-dir` (default `<repo>/docs`), `--backend api\|claude-code`, `--provider`, `--fast-model`, `--smart-model`, `--max-files` (default 300), `--concurrency`, `--no-cache`, `--plain` (log lines only, no live bar; also enabled automatically when output is piped, or with `CODEDOC_PLAIN=1`).
 
 `<repo>` can be a local folder or a git URL. A URL is shallow-cloned to a temp folder and deleted afterwards.
 
 ### Use it from Python
 
 ```python
-from codedoc import generate_srs, Settings
+from codedoc import generate_docs, Settings
 
 settings = Settings(backend="api", provider="openai", fast_model="gpt-5-mini", smart_model="gpt-5.5")
-result = generate_srs("path/to/repo", "SRS.md", settings)
-print(result.output_path, result.functional_requirements)
+result = generate_docs("path/to/repo", ["srs", "api", "user_manual"], "docs", settings)
+for doc in result.documents:
+    print(doc.label, doc.output_path if doc.ok else f"failed: {doc.error}")
 ```
 
 ## Configuration
@@ -76,21 +95,22 @@ API keys are **not** saved unless you explicitly agree. The recommended approach
 
 Environment overrides: `CODEDOC_BACKEND`, `CODEDOC_PROVIDER`, `CODEDOC_FAST_MODEL`, `CODEDOC_SMART_MODEL`, `CODEDOC_BASE_URL`, `CODEDOC_HOME`.
 
-**Two models?** The *fast* model summarises every file, so it makes many calls and should be a cheap model. The *smart* model reasons over the whole system once to write the requirements, so it should be your strongest model. You can use the same model for both.
+**Two models?** The *fast* model summarises every file, so it makes many calls and should be a cheap model. The *smart* model reasons over the whole system once per document, so it should be your strongest model. You can use the same model for both.
 
 ## How it works
 
 ```
-START → scan → summarize_file ×N → group_modules → summarize_module ×M → infer_requirements → render_srs → END
-        (no LLM)  (parallel, fast,     (no LLM)       (parallel, fast)      (smart model)       (no LLM)
-                   cached)
+START → scan → summarize_file ×N → group_modules → summarize_module ×M → plan_documents → write_document ×K → END
+        (no LLM)  (parallel, fast,     (no LLM)       (parallel, fast)        (no LLM)        (parallel, smart model,
+                   cached)                                                                    one per chosen document)
 ```
 
 1. **scan** walks the repo, respects `.gitignore`, skips `node_modules`, builds, lock files and binaries, and **never reads secrets** (`.env`, keys, credentials). It detects the tech stack and ranks files by business value (README, routes, models and services before tests).
 2. **summarize_file** runs in parallel with LangGraph `Send` (map step). Results are cached by file hash, so a re-run only pays for changed files.
 3. **summarize_module** merges file summaries into feature areas (reduce step).
-4. **infer_requirements** produces actors, features, FR/NFR with priority, confidence and source references, business rules, data entities, interfaces, assumptions, open questions and a glossary.
-5. **render_srs** turns that into a Markdown SRS. This step is deterministic and needs no LLM.
+4. **write_document** runs once per chosen document, in parallel, with a document-specific prompt and schema (the SRS gets actors, FR/NFR with priority, confidence and sources; the API doc gets endpoints, parameters and data models; and so on). The structured result is rendered to Markdown deterministically, without an LLM. If one document fails, the others are still written.
+
+Summaries capture both the business view and technical facts (endpoints, public interfaces, configuration, dependencies), so every document type is written from the same single pass over the code.
 
 Structured output uses JSON-in-prompt plus Pydantic validation with one automatic repair retry. This works on **every** provider, including models without tool calling and the Claude Code CLI.
 
@@ -113,9 +133,10 @@ src/codedoc/
   prompts.py          all prompts
   schemas.py          Pydantic output schemas
   structured.py       provider-independent JSON output
-  render.py           SRS Markdown renderer
+  doctypes.py         document-type registry (add a document type here)
+  render.py           Markdown renderers, one per document type
   cache.py            file-summary cache
-  api.py              generate_srs() public API
+  api.py              generate_docs() public API
 tests/                pytest suite (uses a fake LLM, no network)
 ```
 

@@ -5,9 +5,13 @@
       -> summarize_file  x N       (parallel via Send, fast model, cached)
       -> group_modules             (plain Python)
       -> summarize_module x M      (parallel via Send, fast model)
-      -> infer_requirements        (smart model)
-      -> render_srs                (plain Python -> Markdown)
+      -> plan_documents            (plain Python, join point)
+      -> write_document x K        (parallel via Send, one per chosen doc type,
+                                    smart model + plain Python -> Markdown)
       -> END
+
+The repo is scanned and summarised once; every chosen document (SRS, user manual,
+API doc, ...) is written from the same module summaries.
 
 Dependencies (LLMs, cache, progress callback) are injected through
 ``AgentDeps`` so the graph can be tested with fake models.
@@ -28,14 +32,17 @@ from langgraph.types import Send
 
 from codedoc import prompts
 from codedoc.cache import SummaryCache
-from codedoc.render import render_srs_markdown
+from codedoc.doctypes import get_doc_type
 from codedoc.scanner import scan_repository
-from codedoc.schemas import FileSummary, ModuleSummary, SRSDocument
-from codedoc.state import DocState, FileTask, ModuleTask
+from codedoc.schemas import FileSummary, ModuleSummary
+from codedoc.state import DocState, DocumentTask, FileTask, ModuleTask
 from codedoc.structured import invoke_structured
 from codedoc.text import truncate
 
 ProgressFn = Callable[..., None]
+
+# technical facts collected next to the business view (used by API / developer / design docs)
+TECHNICAL_FIELDS = ("api_endpoints", "public_interfaces", "user_interactions", "configuration", "dependencies")
 
 
 def _noop(event: str, **data: Any) -> None:
@@ -89,7 +96,7 @@ def build_graph(deps: AgentDeps):
         started = time.monotonic()
         error = None
         try:
-            summary = invoke_structured(deps.fast_llm, prompt, FileSummary)
+            summary = invoke_structured(deps.fast_llm, prompt, FileSummary, system=prompts.SYSTEM_ANALYST)
             record = {"path": f["path"], "module": f["module"], **summary.model_dump()}
             deps.cache.put(f["path"], f["content"], record)
             warnings: list[str] = []
@@ -116,7 +123,8 @@ def build_graph(deps: AgentDeps):
             s = summaries[0]
             record = {"module": name, "files": files, "purpose": s.get("purpose", ""),
                       "capabilities": s.get("key_elements", []), "business_rules": s.get("business_logic", []),
-                      "entities": s.get("entities", []), "integrations": s.get("integrations", []), "actors": []}
+                      "entities": s.get("entities", []), "integrations": s.get("integrations", []), "actors": [],
+                      **{k: s.get(k, []) for k in TECHNICAL_FIELDS}}
             progress("module_done", module=name, files=1, merged=False, ok=True, seconds=0.0)
             return {"module_summaries": [record]}
 
@@ -129,7 +137,7 @@ def build_graph(deps: AgentDeps):
         started = time.monotonic()
         error = None
         try:
-            summary = invoke_structured(deps.fast_llm, prompt, ModuleSummary)
+            summary = invoke_structured(deps.fast_llm, prompt, ModuleSummary, system=prompts.SYSTEM_ANALYST)
             record = {"module": name, "files": files, **summary.model_dump()}
             warnings: list[str] = []
         except Exception as exc:
@@ -141,35 +149,41 @@ def build_graph(deps: AgentDeps):
                  seconds=time.monotonic() - started, error=error)
         return {"module_summaries": [record], "warnings": warnings}
 
-    def infer_requirements(state: DocState) -> dict:
-        modules = sorted(state.get("module_summaries", []), key=lambda m: m["module"])
-        progress("requirements_start", modules=len(modules))
+    def plan_documents(state: DocState) -> dict:
+        progress("documents_start", doc_types=state.get("doc_types", []),
+                 modules=len(state.get("module_summaries", [])))
+        return {}
+
+    def write_document(task: DocumentTask) -> dict:
+        dt = get_doc_type(task["doc_type"])
+        modules = sorted(task["module_summaries"], key=lambda m: m["module"])
+        progress("document_start", doc_type=dt.id, label=dt.label)
         started = time.monotonic()
-        prompt = prompts.REQUIREMENTS.format(
-            project_name=state["project_name"], stack=", ".join(state.get("stack", [])) or "unknown",
-            file_count=len(state.get("files", [])),
-            readme=truncate(state.get("readme", "") or "(no README)", 6_000),
+        prompt = dt.prompt.format(
+            project_name=task["project_name"], stack=", ".join(task["stack"]) or "unknown",
+            file_count=task["file_count"],
+            readme=truncate(task["readme"] or "(no README)", 6_000),
             modules=truncate(json.dumps(modules, indent=1), 120_000),
         )
-        srs = invoke_structured(deps.smart_llm, prompt, SRSDocument)
-        if not srs.project_name:
-            srs.project_name = state["project_name"]
-        progress("requirements_done", requirements=len(srs.functional_requirements),
-                 nfrs=len(srs.non_functional_requirements), seconds=time.monotonic() - started)
-        return {"srs": srs.model_dump()}
-
-    def render_srs(state: DocState) -> dict:
-        markdown = render_srs_markdown(
-            SRSDocument.model_validate(state["srs"]),
-            stack=state.get("stack", []),
-            module_summaries=state.get("module_summaries", []),
-            files_analysed=len(state.get("files", [])),
-            warnings=state.get("warnings", []),
-            model_info=deps.model_info,
-            generated_on=date.today().isoformat(),
-        )
-        progress("render_done")
-        return {"srs_markdown": markdown}
+        try:  # one failed document must not lose the others
+            doc = invoke_structured(deps.smart_llm, prompt, dt.schema, system=dt.system)
+            if not doc.project_name:
+                doc.project_name = task["project_name"]
+            markdown = dt.render(
+                doc, stack=task["stack"], module_summaries=modules, files_analysed=task["file_count"],
+                warnings=task["warnings"], model_info=deps.model_info, generated_on=date.today().isoformat(),
+            )
+        except Exception as exc:
+            error = str(exc)[:200]
+            progress("document_done", doc_type=dt.id, label=dt.label, ok=False,
+                     seconds=time.monotonic() - started, stats="", error=error)
+            return {"documents": [{"doc_type": dt.id, "label": dt.label, "ok": False, "error": error,
+                                   "data": {}, "markdown": ""}],
+                    "warnings": [f"Could not write the {dt.label}: {error}"]}
+        progress("document_done", doc_type=dt.id, label=dt.label, ok=True,
+                 seconds=time.monotonic() - started, stats=dt.stats(doc), error=None)
+        return {"documents": [{"doc_type": dt.id, "label": dt.label, "ok": True, "error": None,
+                               "data": doc.model_dump(), "markdown": markdown}]}
 
     # ---------- fan-out routers (they return Send objects = parallel branches) ----------
     def fan_out_files(state: DocState):
@@ -182,11 +196,19 @@ def build_graph(deps: AgentDeps):
     def fan_out_modules(state: DocState):
         modules = state.get("modules", {})
         if not modules:
-            return "infer_requirements"
+            return "plan_documents"
         return [Send("summarize_module", {"module": name, "summaries": items,
                                           "project_name": state["project_name"],
                                           "stack": state.get("stack", [])})
                 for name, items in modules.items()]
+
+    def fan_out_documents(state: DocState):
+        return [Send("write_document", {"doc_type": doc_id, "project_name": state["project_name"],
+                                        "stack": state.get("stack", []), "readme": state.get("readme", ""),
+                                        "file_count": len(state.get("files", [])),
+                                        "module_summaries": state.get("module_summaries", []),
+                                        "warnings": state.get("warnings", [])})
+                for doc_id in state.get("doc_types") or ["srs"]]
 
     # ---------- wiring ----------
     g = StateGraph(DocState)
@@ -194,14 +216,14 @@ def build_graph(deps: AgentDeps):
     g.add_node("summarize_file", summarize_file, input_schema=FileTask)
     g.add_node("group_modules", group_modules)
     g.add_node("summarize_module", summarize_module, input_schema=ModuleTask)
-    g.add_node("infer_requirements", infer_requirements)
-    g.add_node("render_srs", render_srs)
+    g.add_node("plan_documents", plan_documents)
+    g.add_node("write_document", write_document, input_schema=DocumentTask)
 
     g.add_edge(START, "scan")
     g.add_conditional_edges("scan", fan_out_files, ["summarize_file", "group_modules"])
     g.add_edge("summarize_file", "group_modules")
-    g.add_conditional_edges("group_modules", fan_out_modules, ["summarize_module", "infer_requirements"])
-    g.add_edge("summarize_module", "infer_requirements")
-    g.add_edge("infer_requirements", "render_srs")
-    g.add_edge("render_srs", END)
+    g.add_conditional_edges("group_modules", fan_out_modules, ["summarize_module", "plan_documents"])
+    g.add_edge("summarize_module", "plan_documents")
+    g.add_conditional_edges("plan_documents", fan_out_documents, ["write_document"])
+    g.add_edge("write_document", END)
     return g.compile()

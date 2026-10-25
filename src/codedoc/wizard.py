@@ -1,14 +1,15 @@
 """Interactive questions shown when a user runs ``codedoc``.
 
 Flow:
-  1. Which project should be documented?            (folder or git URL)
-  2. API key or the installed Claude Code?           (Claude Code is verified)
-  3. Which LLM provider?                             (API path only)
-  4. API key                                         (hidden input)
-  5. Fast model name / Smart model name
-  6. Connection test
-  7. Output path for the SRS
-  8. Save settings for next time?
+  1. Which document(s) should be generated?         (one, all, or several via a checkbox)
+  2. Which project should be documented?            (folder or git URL)
+  3. API key or the installed Claude Code?           (Claude Code is verified)
+  4. Which LLM provider?                             (API path only)
+  5. API key                                         (hidden input)
+  6. Fast model name / Smart model name
+  7. Connection test
+  8. Output folder for the documents
+  9. Save settings for next time?
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from rich.console import Console
 from rich.table import Table
 
 from codedoc.config import BACKEND_API, BACKEND_CLAUDE_CODE, Settings, config_file, save_settings
+from codedoc.doctypes import DOC_TYPES, get_doc_type, parse_doc_types
 from codedoc.llm import build_llm, ping
 from codedoc.llm_claude_cli import check_claude_code
 from codedoc.providers import PROVIDERS, get_provider, install_package, is_installed
@@ -49,8 +51,11 @@ def _repo_validator(value: str) -> bool | str:
     return "Folder not found"
 
 
-def settings_table(settings: Settings, repo: str | None = None, output: Path | None = None) -> Table:
+def settings_table(settings: Settings, repo: str | None = None, output: Path | None = None,
+                   doc_types: list[str] | None = None) -> Table:
     table = Table(show_header=False, box=None, padding=(0, 2))
+    if doc_types:
+        table.add_row("Documents", "\n".join(get_doc_type(d).label for d in doc_types))
     if repo:
         table.add_row("Project", repo)
     if settings.backend == BACKEND_CLAUDE_CODE:
@@ -63,26 +68,46 @@ def settings_table(settings: Settings, repo: str | None = None, output: Path | N
     table.add_row("Fast model", settings.fast_model)
     table.add_row("Smart model", settings.smart_model)
     if output:
-        table.add_row("Output", str(output))
+        table.add_row("Output folder", str(output))
     return table
 
 
 # ---------------------------------------------------------------- questions
-def ask_repo(default: str = ".") -> str:
+def ask_doc_types() -> list[str]:
+    """Arrow + Enter picks exactly the highlighted document; several documents need an explicit checkbox."""
+    choice = questionary.select(
+        "Which document do you want to generate?",
+        choices=[Choice(f"{d.label}  -  {d.description}", value=d.id) for d in DOC_TYPES]
+        + [Choice("All documents", value="all"),
+           Choice("Several documents (choose with a checkbox) ...", value="several")],
+    ).unsafe_ask()
+    if choice == "several":
+        choice = questionary.checkbox(
+            "Which documents should I generate?",
+            choices=[Choice(f"{d.label}  -  {d.description}", value=d.id) for d in DOC_TYPES],
+            instruction="(Space = tick/untick, Enter = confirm)",
+            validate=lambda picked: True if picked else "Tick at least one document with Space",
+        ).unsafe_ask()
+    doc_types = parse_doc_types(choice)
+    console.print("[green]v[/] Will generate: " + ", ".join(get_doc_type(d).label for d in doc_types))
+    return doc_types
+
+
+def ask_repo(default: str = "") -> str:
     answer = questionary.text(
         "Which project should I document? (folder path or git URL)",
-        default=default, validate=_repo_validator,
+        default=default, validate=_repo_validator,  # empty by default: no "." to delete before typing
     ).unsafe_ask()
     answer = answer.strip().strip('"')  # Windows "Copy as path" adds quotes
     return answer if is_remote(answer) else str(Path(answer).expanduser().resolve())
 
 
-def ask_output(default: Path) -> Path:
-    answer = questionary.text("Where should the SRS document be saved?",
+def ask_output_dir(default: Path) -> Path:
+    answer = questionary.text("In which folder should the documents be saved?",
                               default=str(default), validate=_not_empty).unsafe_ask()
     path = Path(answer.strip().strip('"')).expanduser()
-    if path.suffix.lower() not in {".md", ".markdown"}:
-        path = path / "SRS.md"  # user gave a folder
+    if path.suffix.lower() in {".md", ".markdown"}:
+        path = path.parent  # user gave a file name: use its folder
     return path.resolve()
 
 

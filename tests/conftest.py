@@ -26,6 +26,39 @@ SRS_REPLY = {
     "external_interfaces": [], "assumptions": ["Single currency"],
     "open_questions": ["Are refunds supported?"], "glossary": [{"term": "SKU", "definition": "Stock unit"}],
 }
+USER_MANUAL_REPLY = {
+    "project_name": "shop", "introduction": "How to use the shop.", "audience": "Customers",
+    "getting_started": ["Open the shop website", "Sign in"],
+    "sections": [{"title": "Placing an order", "overview": "Buy products.",
+                  "steps": ["Add items to the cart", "Click Checkout"], "tips": ["Totals must be positive"]}],
+    "faq": [{"question": "Can I cancel an order?", "answer": "Not yet."}],
+    "troubleshooting": [{"problem": "Checkout fails", "solution": "Sign in first."}],
+}
+API_REPLY = {
+    "project_name": "shop", "overview": "REST API of the shop.", "authentication": "Session cookie",
+    "endpoints": [{"method": "POST", "path": "/orders", "group": "Orders", "summary": "Create an order",
+                   "parameters": [{"name": "total", "location": "body", "type": "number", "required": True}],
+                   "request_body": '{"total": 10}', "responses": [{"status": "201", "description": "Created"}],
+                   "sources": ["app/api/routes.py"]}],
+    "data_models": [{"name": "Order", "fields": ["id: int", "total: number"]}],
+}
+TECHNICAL_REPLY = {
+    "project_name": "shop", "overview": "FastAPI service.",
+    "tech_stack": [{"name": "FastAPI", "description": "HTTP layer"}],
+    "project_structure": [{"name": "app/", "description": "Application code"}],
+    "setup_steps": ["pip install -r requirements.txt"], "run_steps": ["uvicorn app.main:app"],
+    "components": [{"name": "Orders", "responsibility": "Order handling", "key_elements": ["create_order"],
+                    "sources": ["app/orders.py"]}],
+}
+DESIGN_REPLY = {
+    "project_name": "shop", "introduction": "Design of the shop.", "architecture_overview": "Layered web app.",
+    "architectural_style": "Layered", "architecture_diagram": "flowchart LR\n  API --> Orders",
+    "components": [{"name": "API", "responsibility": "HTTP routes"}],
+    "design_decisions": [{"decision": "Use FastAPI", "rationale": "Async and typed"}],
+}
+REPLIES = {"summarize_file": FILE_REPLY, "summarize_module": MODULE_REPLY, "write_srs": SRS_REPLY,
+           "write_user_manual": USER_MANUAL_REPLY, "write_api_doc": API_REPLY,
+           "write_technical_doc": TECHNICAL_REPLY, "write_design_doc": DESIGN_REPLY, "fix": FILE_REPLY}
 
 
 class FakeBA(BaseChatModel):
@@ -33,6 +66,7 @@ class FakeBA(BaseChatModel):
 
     calls: dict = {}
     bad_first_reply: bool = False
+    fail_tasks: set = set()  # tasks that always answer with non-JSON
 
     @property
     def _llm_type(self) -> str:
@@ -43,20 +77,15 @@ class FakeBA(BaseChatModel):
         last = str(messages[-1].content)
         if "could not be parsed" in last:
             task = "fix"
-        elif "TASK: summarize_file" in prompt:
-            task = "summarize_file"
-        elif "TASK: summarize_module" in prompt:
-            task = "summarize_module"
         else:
-            task = "infer_requirements"
+            task = next(t for t in REPLIES if f"TASK: {t}" in prompt)
         with threading.Lock():
             self.calls[task] = self.calls.get(task, 0) + 1
-        if self.bad_first_reply and task != "fix":
+        failing = any(f"TASK: {t}" in prompt for t in self.fail_tasks)  # also fails the "fix" retry
+        if failing or (self.bad_first_reply and task != "fix"):
             text = "Sure! here is something that is not json"
         else:
-            reply = {"summarize_file": FILE_REPLY, "summarize_module": MODULE_REPLY,
-                     "infer_requirements": SRS_REPLY, "fix": FILE_REPLY}[task]
-            text = "```json\n" + json.dumps(reply) + "\n```"
+            text = "```json\n" + json.dumps(REPLIES[task]) + "\n```"
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
 
 
