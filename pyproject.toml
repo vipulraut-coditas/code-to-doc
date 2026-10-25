@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codedoc-agent"
+version = "0.1.0"
+description = "An AI agent that reads any code repository and writes a Business-Analyst style SRS document."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Vipul Raut" }]
+keywords = ["langgraph", "agent", "srs", "documentation", "llm", "business-analysis"]
+dependencies = [
+    "langgraph>=1.0",
+    "langchain>=1.0",
+    "langchain-core>=1.0",
+    "pydantic>=2.6",
+    "questionary>=2.0",
+    "rich>=13.7",
+    "pathspec>=0.12",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+anthropic = ["langchain-anthropic"]
+openai = ["langchain-openai"]
+xai = ["langchain-xai"]
+google = ["langchain-google-genai"]
+groq = ["langchain-groq"]
+deepseek = ["langchain-deepseek"]
+mistral = ["langchain-mistralai"]
+ollama = ["langchain-ollama"]
+all = [
+    "langchain-anthropic",
+    "langchain-openai",
+    "langchain-xai",
+    "langchain-google-genai",
+    "langchain-groq",
+    "langchain-deepseek",
+    "langchain-mistralai",
+    "langchain-ollama",
+]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+codedoc = "codedoc.cli:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/codedoc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
