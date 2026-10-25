@@ -56,3 +56,26 @@ def test_several_documents_needs_at_least_one_tick(keys):
          + ENTER                                      # nothing ticked: rejected, prompt stays open
          + DOWN * 3 + SPACE + ENTER)
     assert wizard.ask_doc_types() == ["technical"]
+
+
+def test_format_word(keys):
+    keys(DOWN + ENTER)
+    assert wizard.ask_formats() == ["docx"]
+
+
+def test_several_formats(keys):
+    keys(DOWN * 4 + ENTER + SPACE + DOWN + SPACE + ENTER)  # "Several formats ...", tick Markdown + Word
+    assert wizard.ask_formats() == ["md", "docx"]
+
+
+def test_google_docs_signs_in_up_front(keys, monkeypatch):
+    calls = []
+    monkeypatch.setattr(wizard, "ensure_google_ready", lambda: calls.append("google") or True)
+    keys(DOWN * 2 + ENTER)
+    assert wizard.ask_formats() == ["gdoc"] and calls == ["google"]
+
+
+def test_google_docs_falls_back_to_markdown_when_setup_is_skipped(keys, monkeypatch):
+    monkeypatch.setattr(wizard, "ensure_google_ready", lambda: False)
+    keys(DOWN * 2 + ENTER)
+    assert wizard.ask_formats() == ["md"]

@@ -214,3 +214,7 @@ class ProgressUI:
         if self._done == self._total:
             self.progress.update(self._task, visible=False)
             self._print(f"  [dim]total time {fmt_seconds(time.monotonic() - self._run_started)}[/]")
+
+    def on_export_done(self, doc_type: str, label: str, outputs: dict[str, str]) -> None:
+        if outputs:
+            self._print(f"  [green]{self.sym['ok']}[/] Saved {escape(label)} as {escape(', '.join(outputs))}")

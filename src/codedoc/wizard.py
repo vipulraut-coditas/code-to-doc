@@ -2,19 +2,21 @@
 
 Flow:
   1. Which document(s) should be generated?         (one, all, or several via a checkbox)
-  2. Which project should be documented?            (folder or git URL)
-  3. API key or the installed Claude Code?           (Claude Code is verified)
-  4. Which LLM provider?                             (API path only)
-  5. API key                                         (hidden input)
-  6. Fast model name / Smart model name
-  7. Connection test
-  8. Output folder for the documents
-  9. Save settings for next time?
+  2. Which format(s)?                               (Markdown, Word, Google Docs -> Google sign-in)
+  3. Which project should be documented?            (folder or git URL)
+  4. API key or the installed Claude Code?           (Claude Code is verified)
+  5. Which LLM provider?                             (API path only)
+  6. API key                                         (hidden input)
+  7. Fast model name / Smart model name
+  8. Connection test
+  9. Output folder for the documents                (skipped for Google Docs only)
+ 10. Save settings for next time?
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 import questionary
@@ -24,9 +26,11 @@ from rich.table import Table
 
 from codedoc.config import BACKEND_API, BACKEND_CLAUDE_CODE, Settings, config_file, save_settings
 from codedoc.doctypes import DOC_TYPES, get_doc_type, parse_doc_types
+from codedoc.formats import (FORMATS, GOOGLE_PACKAGE, GOOGLE_SETUP_HELP, get_format, google_authorize,
+                             google_credentials_file, google_libraries_installed, google_token_file, parse_formats)
 from codedoc.llm import build_llm, ping
 from codedoc.llm_claude_cli import check_claude_code
-from codedoc.providers import PROVIDERS, get_provider, install_package, is_installed
+from codedoc.providers import PROVIDERS, get_provider, install_package, is_installed, pip_install
 from codedoc.repo_source import is_remote
 
 console = Console()
@@ -52,10 +56,12 @@ def _repo_validator(value: str) -> bool | str:
 
 
 def settings_table(settings: Settings, repo: str | None = None, output: Path | None = None,
-                   doc_types: list[str] | None = None) -> Table:
+                   doc_types: list[str] | None = None, formats: list[str] | None = None) -> Table:
     table = Table(show_header=False, box=None, padding=(0, 2))
     if doc_types:
         table.add_row("Documents", "\n".join(get_doc_type(d).label for d in doc_types))
+    if formats:
+        table.add_row("Formats", ", ".join(get_format(f).label for f in formats))
     if repo:
         table.add_row("Project", repo)
     if settings.backend == BACKEND_CLAUDE_CODE:
@@ -73,24 +79,75 @@ def settings_table(settings: Settings, repo: str | None = None, output: Path | N
 
 
 # ---------------------------------------------------------------- questions
-def ask_doc_types() -> list[str]:
-    """Arrow + Enter picks exactly the highlighted document; several documents need an explicit checkbox."""
+def _ask_one_or_more(question: str, items: list, noun: str) -> str | list[str]:
+    """Arrow + Enter picks exactly the highlighted item; several items need an explicit checkbox.
+
+    ``items`` have ``id``, ``label`` and ``description``. Returns an id, ``"all"`` or a list of ids.
+    """
+    choices = [Choice(f"{x.label}  -  {x.description}", value=x.id) for x in items]
     choice = questionary.select(
-        "Which document do you want to generate?",
-        choices=[Choice(f"{d.label}  -  {d.description}", value=d.id) for d in DOC_TYPES]
-        + [Choice("All documents", value="all"),
-           Choice("Several documents (choose with a checkbox) ...", value="several")],
+        question,
+        choices=choices + [Choice(f"All {noun}s", value="all"),
+                           Choice(f"Several {noun}s (choose with a checkbox) ...", value="several")],
     ).unsafe_ask()
     if choice == "several":
         choice = questionary.checkbox(
-            "Which documents should I generate?",
-            choices=[Choice(f"{d.label}  -  {d.description}", value=d.id) for d in DOC_TYPES],
+            f"Which {noun}s?", choices=choices,
             instruction="(Space = tick/untick, Enter = confirm)",
-            validate=lambda picked: True if picked else "Tick at least one document with Space",
+            validate=lambda picked: True if picked else f"Tick at least one {noun} with Space",
         ).unsafe_ask()
-    doc_types = parse_doc_types(choice)
+    return choice
+
+
+def ask_doc_types() -> list[str]:
+    doc_types = parse_doc_types(_ask_one_or_more("Which document do you want to generate?", DOC_TYPES, "document"))
     console.print("[green]v[/] Will generate: " + ", ".join(get_doc_type(d).label for d in doc_types))
     return doc_types
+
+
+def ask_formats() -> list[str]:
+    formats = parse_formats(_ask_one_or_more("In which format should the documents be created?", FORMATS, "format"))
+    if "gdoc" in formats and not ensure_google_ready():
+        formats = [f for f in formats if f != "gdoc"] or ["md"]
+        console.print("[yellow]![/] Skipping Google Docs.")
+    console.print("[green]v[/] Format: " + ", ".join(get_format(f).label for f in formats))
+    return formats
+
+
+def ensure_google_ready() -> bool:
+    """Install the Google library if needed, find the OAuth client file and sign in now (before the long run)."""
+    if not google_libraries_installed():
+        console.print(f"[yellow]![/] Google Docs output needs the Python package [bold]{GOOGLE_PACKAGE}[/].")
+        if not questionary.confirm(f"Install {GOOGLE_PACKAGE} now with pip?", default=True).unsafe_ask():
+            return False
+        if not pip_install(GOOGLE_PACKAGE) or not google_libraries_installed():
+            console.print(f"[red]x Installation failed.[/] Try: pip install {GOOGLE_PACKAGE}")
+            return False
+        console.print(f"[green]v[/] Installed {GOOGLE_PACKAGE}")
+
+    client = google_credentials_file()
+    if not client.exists() and not google_token_file().exists():
+        console.print(GOOGLE_SETUP_HELP.format(path=client))
+        answer = questionary.text("Path to the downloaded OAuth client JSON (leave empty to skip Google Docs):"
+                                  ).unsafe_ask().strip().strip('"')
+        if not answer:
+            return False
+        source = Path(answer).expanduser()
+        if not source.is_file():
+            console.print(f"[red]x File not found:[/] {source}")
+            return False
+        client.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, client)
+        console.print(f"[green]v[/] Saved the OAuth client to {client}")
+
+    try:
+        with console.status("Signing in to Google (a browser window may open) ..."):
+            google_authorize()
+    except Exception as exc:
+        console.print(f"[red]x Google sign-in failed:[/] {str(exc)[:600]}")
+        return False
+    console.print("[green]v[/] Signed in to Google.")
+    return True
 
 
 def ask_repo(default: str = "") -> str:
@@ -106,7 +163,7 @@ def ask_output_dir(default: Path) -> Path:
     answer = questionary.text("In which folder should the documents be saved?",
                               default=str(default), validate=_not_empty).unsafe_ask()
     path = Path(answer.strip().strip('"')).expanduser()
-    if path.suffix.lower() in {".md", ".markdown"}:
+    if path.suffix.lower() in {".md", ".markdown", ".docx"}:
         path = path.parent  # user gave a file name: use its folder
     return path.resolve()
 

@@ -66,8 +66,13 @@ def is_installed(provider: Provider) -> bool:
     return importlib.util.find_spec(provider.module) is not None
 
 
+def pip_install(package: str) -> bool:
+    """pip-install a package into the current Python environment."""
+    result = subprocess.run([sys.executable, "-m", "pip", "install", package])
+    importlib.invalidate_caches()
+    return result.returncode == 0
+
+
 def install_package(provider: Provider) -> bool:
     """pip-install the provider's integration into the current Python environment."""
-    result = subprocess.run([sys.executable, "-m", "pip", "install", provider.package])
-    importlib.invalidate_caches()
-    return result.returncode == 0 and is_installed(provider)
+    return pip_install(provider.package) and is_installed(provider)

@@ -20,6 +20,8 @@ dependencies = [
     "rich>=13.7",
     "pathspec>=0.12",
     "python-dotenv>=1.0",
+    "python-docx>=1.1",
+    "markdown-it-py>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -40,7 +42,10 @@ all = [
     "langchain-deepseek",
     "langchain-mistralai",
     "langchain-ollama",
+    "google-auth-oauthlib>=1.2",
+    "requests",
 ]
+gdocs = ["google-auth-oauthlib>=1.2", "requests"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]

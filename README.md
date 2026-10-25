@@ -1,14 +1,24 @@
 # codedoc: AI documentation agent for any codebase
 
-`codedoc` reads a code repository once and writes the standard software documents you choose, in Markdown:
+`codedoc` reads a code repository once and writes the standard software documents you choose:
 
 | Document | id | File |
 |---|---|---|
-| Software Requirements Specification (SRS) | `srs` | `SRS.md` |
-| User Manual | `user_manual` | `USER_MANUAL.md` |
-| API Documentation | `api` | `API.md` |
-| Technical / Developer Documentation | `technical` | `TECHNICAL.md` |
-| Software Design Document (SDD) | `design` | `DESIGN.md` |
+| Software Requirements Specification (SRS) | `srs` | `SRS` |
+| User Manual | `user_manual` | `USER_MANUAL` |
+| API Documentation | `api` | `API` |
+| Technical / Developer Documentation | `technical` | `TECHNICAL` |
+| Software Design Document (SDD) | `design` | `DESIGN` |
+
+in the formats you choose:
+
+| Format | id | Result |
+|---|---|---|
+| Markdown | `md` | `<name>.md` in the output folder |
+| Word | `docx` | `<name>.docx` in the output folder |
+| Google Docs | `gdoc` | a Google Doc in your Drive (link printed at the end), see [Google Docs setup](#google-docs-setup) |
+
+Every document is written once and then converted, so extra formats cost no extra LLM calls.
 
 It is built with **LangGraph** and is **LLM-agnostic**. It works with:
 
@@ -27,6 +37,13 @@ codedoc
     All documents
     Several documents (choose with a checkbox) ...
 v Will generate: API Documentation
+? In which format should the documents be created?
+    Markdown (.md)  -  plain text, great for Git repos and wikis
+  > Word document (.docx)  -  open and edit in Microsoft Word / LibreOffice
+    Google Docs  -  uploaded to your Google Drive (Google sign-in needed)
+    All formats
+    Several formats (choose with a checkbox) ...
+v Format: Word document (.docx)
 ? Which project should I document? (folder path or git URL)  C:\work\my-app
 ? How do you want to connect to an LLM?
   > I have an API key (Anthropic, OpenAI, Grok, Gemini, Groq, ...)
@@ -34,7 +51,9 @@ v Will generate: API Documentation
     Use a local model with Ollama (free, no API key)
 ...
 Documents ready!
-  v API Documentation   C:\work\my-app\docs\API.md
+v API Documentation
+    .docx        API.docx
+Folder: C:\work\my-app\docs
 ```
 
 ## Install
@@ -49,20 +68,20 @@ cd code-to-srs-agent
 pip install -e ".[all,dev]"
 ```
 
-Available extras: `anthropic`, `openai`, `xai`, `google`, `groq`, `deepseek`, `mistral`, `ollama`, `all`.
+Available extras: `anthropic`, `openai`, `xai`, `google`, `groq`, `deepseek`, `mistral`, `ollama`, `gdocs` (Google Docs output), `all`.
 If you skip the extra, the setup wizard offers to `pip install` the right package for you.
 
 ## Usage
 
 | Command | What it does |
 |---|---|
-| `codedoc` | Interactive. First asks which document to generate (one, all, or several via a checkbox), then the project, the LLM settings and the output folder. |
+| `codedoc` | Interactive. First asks which document(s) and which format(s) to generate (one, all, or several via a checkbox), then the project, the LLM settings and the output folder. |
 | `codedoc setup` | Configure only the LLM (backend, provider, API key, fast and smart model) and save it. |
-| `codedoc generate <repo> [--doc srs,api] [-o out-dir]` | Runs without questions, using saved settings or environment variables. Good for CI. |
+| `codedoc generate <repo> [--doc srs,api] [--format md,docx,gdoc] [-o out-dir]` | Runs without questions, using saved settings or environment variables. Good for CI. |
 | `codedoc doctor` | Shows the current settings and tests the LLM connection. |
 | `python -m codedoc` | Same as `codedoc`. |
 
-`generate` options: `--doc` (comma-separated ids from the table above, or `all`; default `srs`), `-o/--output-dir` (default `<repo>/docs`), `--backend api\|claude-code`, `--provider`, `--fast-model`, `--smart-model`, `--max-files` (default 300), `--concurrency`, `--no-cache`, `--plain` (log lines only, no live bar; also enabled automatically when output is piped, or with `CODEDOC_PLAIN=1`).
+`generate` options: `--doc` (comma-separated document ids from the table above, or `all`; default `srs`), `-f/--format` (comma-separated format ids, or `all`; default `md`), `-o/--output-dir` for `.md`/`.docx` files (default `<repo>/docs`), `--gdrive-folder` (Drive folder id for Google Docs; default My Drive), `--backend api\|claude-code`, `--provider`, `--fast-model`, `--smart-model`, `--max-files` (default 300), `--concurrency`, `--no-cache`, `--plain` (log lines only, no live bar; also enabled automatically when output is piped, or with `CODEDOC_PLAIN=1`).
 
 `<repo>` can be a local folder or a git URL. A URL is shallow-cloned to a temp folder and deleted afterwards.
 
@@ -72,10 +91,22 @@ If you skip the extra, the setup wizard offers to `pip install` the right packag
 from codedoc import generate_docs, Settings
 
 settings = Settings(backend="api", provider="openai", fast_model="gpt-5-mini", smart_model="gpt-5.5")
-result = generate_docs("path/to/repo", ["srs", "api", "user_manual"], "docs", settings)
+result = generate_docs("path/to/repo", ["srs", "api", "user_manual"], "docs", settings, formats=["md", "docx"])
 for doc in result.documents:
-    print(doc.label, doc.output_path if doc.ok else f"failed: {doc.error}")
+    print(doc.label, doc.outputs if doc.ok else f"failed: {doc.error}")  # {"md": path, "docx": path}
 ```
+
+### Google Docs setup
+
+Google Docs output uploads each document to your Google Drive, where Google converts it to a native Google Doc. It needs a one-time setup:
+
+1. Install the extra: `pip install "codedoc-agent[gdocs]"` (the wizard offers to do this for you).
+2. In the [Google Cloud console](https://console.cloud.google.com/), create or pick a project and enable the **Google Drive API**.
+3. Under **OAuth consent screen**, choose *External* and add your Google account as a test user.
+4. Under **Credentials**, create an **OAuth client ID** of type **Desktop app** and download the JSON.
+5. Save it as `~/.codedoc/google_credentials.json`, or set `CODEDOC_GOOGLE_CREDENTIALS` to its path. The wizard can copy it there for you.
+
+The first run opens your browser to sign in. The token is saved to `~/.codedoc/google_token.json` (delete it to sign out). codedoc only asks for the `drive.file` scope, so it can only see files it created itself. Sign-in happens **before** the analysis starts, so a setup problem shows up immediately, not after a long run. If an upload fails, the Markdown/Word files are still written.
 
 ## Configuration
 
@@ -134,6 +165,7 @@ src/codedoc/
   schemas.py          Pydantic output schemas
   structured.py       provider-independent JSON output
   doctypes.py         document-type registry (add a document type here)
+  formats.py          output formats: Markdown, Word (.docx), Google Docs upload
   render.py           Markdown renderers, one per document type
   cache.py            file-summary cache
   api.py              generate_docs() public API
