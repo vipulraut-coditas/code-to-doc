@@ -26,6 +26,22 @@ It is built with **LangGraph** and is **LLM-agnostic**. It works with:
 - a **local model** through Ollama (free, no key)
 - the **Claude Code CLI** you already have installed (uses your Claude Code login, no API key)
 
+## Quick start
+
+1. Install (needs Python 3.10+ and Git; pick the extra for your LLM provider, see [Install](#install)):
+   ```bash
+   pip install "codedoc-agent[anthropic] @ git+https://github.com/vipulraut-coditas/code-to-doc.git"
+   ```
+2. Start the interactive wizard (on Windows, use the second form if `codedoc` is "not recognized", see [Running on Windows](#running-on-windows)):
+   ```bash
+   codedoc
+   python -m codedoc
+   ```
+3. Answer the questions: document(s), format(s), project folder or git URL, LLM settings, output folder.
+4. Open the generated files (by default in `<project>/docs`) or the printed Google Docs links.
+
+A session looks like this:
+
 ```
 codedoc
 ? Which document do you want to generate?
@@ -58,32 +74,129 @@ Folder: C:\work\my-app\docs
 
 ## Install
 
-```bash
-# from GitHub (install the extra for your provider, or [all])
-pip install "codedoc-agent[anthropic] @ git+https://github.com/<your-user>/code-to-srs-agent.git"
+`pip` installs codedoc **and all of its dependencies automatically** (LangGraph, LangChain, Word support, ...). The `[extra]` in brackets only adds the integration for the LLM provider you want to use:
 
-# for local development
-git clone https://github.com/<your-user>/code-to-srs-agent.git
-cd code-to-srs-agent
+```bash
+pip install "codedoc-agent[anthropic] @ git+https://github.com/vipulraut-coditas/code-to-doc.git"
+```
+
+| Extra | Adds |
+|---|---|
+| `anthropic` | Anthropic (Claude) |
+| `openai` | OpenAI (GPT); also used for any OpenAI-compatible API |
+| `xai` | xAI (Grok) |
+| `google` | Google (Gemini) as the LLM |
+| `groq` | Groq |
+| `deepseek` | DeepSeek |
+| `mistral` | Mistral AI |
+| `ollama` | Ollama (local models) |
+| `gdocs` | Google Docs **output** (Google sign-in libraries) |
+| `all` | all of the above |
+
+Combine extras with a comma, e.g. `[openai,gdocs]`. The Claude Code option needs no extra (it uses the `claude` command you already have). If you skip the extra, the setup wizard offers to `pip install` the right package for you.
+
+For local development:
+
+```bash
+git clone https://github.com/vipulraut-coditas/code-to-doc.git
+cd code-to-doc
 pip install -e ".[all,dev]"
 ```
 
-Available extras: `anthropic`, `openai`, `xai`, `google`, `groq`, `deepseek`, `mistral`, `ollama`, `gdocs` (Google Docs output), `all`.
-If you skip the extra, the setup wizard offers to `pip install` the right package for you.
+## Running on Windows
+
+If pip printed `Defaulting to user installation because normal site-packages is not writeable`, it put `codedoc.exe` in your **user Scripts folder**, which is often not on `PATH`. Typing `codedoc` then fails with *"codedoc is not recognized as the name of a cmdlet..."*. Pick one of these:
+
+**Option A: always works.** Run it through Python:
+
+```powershell
+python -m codedoc
+```
+
+**Option B: permanent fix.** Add the user Scripts folder to your `PATH` (PowerShell):
+
+```powershell
+$scripts = python -c "import sysconfig; print(sysconfig.get_path('scripts', 'nt_user'))"
+[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path","User") + ";$scripts", "User")
+```
+
+Then open a **new** terminal and check:
+
+```powershell
+codedoc --version
+```
+
+**Option C: recommended for isolation.** Use a virtual environment; `codedoc` is on `PATH` whenever it is activated:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install "codedoc-agent[anthropic] @ git+https://github.com/vipulraut-coditas/code-to-doc.git"
+codedoc --version
+```
+
+If PowerShell refuses to run `Activate.ps1` ("running scripts is disabled"), allow local scripts once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
 ## Usage
 
-| Command | What it does |
+Every command works in both forms: `codedoc ...` or `python -m codedoc ...`.
+
+**Interactive:** asks which document(s) and format(s) to generate (one, all, or several via a checkbox), then the project, the LLM settings and the output folder.
+
+```bash
+codedoc
+python -m codedoc
+```
+
+**Configure only the LLM** (backend, provider, API key, fast and smart model) and save it:
+
+```bash
+codedoc setup
+python -m codedoc setup
+```
+
+**Generate without questions**, using saved settings or environment variables (good for CI):
+
+```bash
+codedoc generate C:\work\my-app --doc srs,api --format md,docx
+python -m codedoc generate C:\work\my-app --doc srs,api --format md,docx
+```
+
+```bash
+codedoc generate https://github.com/user/repo.git --doc all --format all -o out
+python -m codedoc generate https://github.com/user/repo.git --doc all --format all -o out
+```
+
+**Show the current settings and test the LLM connection:**
+
+```bash
+codedoc doctor
+python -m codedoc doctor
+```
+
+**Show the version / help:**
+
+```bash
+codedoc --version
+python -m codedoc generate --help
+```
+
+`generate` options:
+
+| Option | Meaning |
 |---|---|
-| `codedoc` | Interactive. First asks which document(s) and which format(s) to generate (one, all, or several via a checkbox), then the project, the LLM settings and the output folder. |
-| `codedoc setup` | Configure only the LLM (backend, provider, API key, fast and smart model) and save it. |
-| `codedoc generate <repo> [--doc srs,api] [--format md,docx,gdoc] [-o out-dir]` | Runs without questions, using saved settings or environment variables. Good for CI. |
-| `codedoc doctor` | Shows the current settings and tests the LLM connection. |
-| `python -m codedoc` | Same as `codedoc`. |
-
-`generate` options: `--doc` (comma-separated document ids from the table above, or `all`; default `srs`), `-f/--format` (comma-separated format ids, or `all`; default `md`), `-o/--output-dir` for `.md`/`.docx` files (default `<repo>/docs`), `--gdrive-folder` (Drive folder id for Google Docs; default My Drive), `--backend api\|claude-code`, `--provider`, `--fast-model`, `--smart-model`, `--max-files` (default 300), `--concurrency`, `--no-cache`, `--plain` (log lines only, no live bar; also enabled automatically when output is piped, or with `CODEDOC_PLAIN=1`).
-
-`<repo>` can be a local folder or a git URL. A URL is shallow-cloned to a temp folder and deleted afterwards.
+| `<repo>` | local folder or git URL (a URL is shallow-cloned to a temp folder and deleted afterwards) |
+| `-d`, `--doc` | comma-separated document ids from the table above, or `all` (default `srs`) |
+| `-f`, `--format` | comma-separated format ids `md`, `docx`, `gdoc`, or `all` (default `md`) |
+| `-o`, `--output-dir` | folder for the `.md` / `.docx` files (default `<repo>/docs`) |
+| `--gdrive-folder` | Google Drive folder id for Google Docs output (default: My Drive) |
+| `--backend` | `api` or `claude-code` |
+| `--provider` | `anthropic`, `openai`, `xai`, `google_genai`, `groq`, `deepseek`, `mistralai`, `ollama`, `compat` |
+| `--fast-model`, `--smart-model` | model names (see [Configuration](#configuration)) |
+| `--max-files` | cap on files analysed (default 300) |
+| `--concurrency` | files analysed in parallel |
+| `--no-cache` | ignore cached file summaries |
+| `--plain` | log lines only, no live progress bar (also automatic when output is piped, or with `CODEDOC_PLAIN=1`) |
 
 ### Use it from Python
 
@@ -100,7 +213,7 @@ for doc in result.documents:
 
 Google Docs output uploads each document to your Google Drive, where Google converts it to a native Google Doc. It needs a one-time setup:
 
-1. Install the extra: `pip install "codedoc-agent[gdocs]"` (the wizard offers to do this for you).
+1. Install the extra: `pip install "codedoc-agent[gdocs] @ git+https://github.com/vipulraut-coditas/code-to-doc.git"` (the wizard offers to install the package for you).
 2. In the [Google Cloud console](https://console.cloud.google.com/), create or pick a project and enable the **Google Drive API**.
 3. Under **OAuth consent screen**, choose *External* and add your Google account as a test user.
 4. Under **Credentials**, create an **OAuth client ID** of type **Desktop app** and download the JSON.
@@ -124,9 +237,19 @@ API keys are **not** saved unless you explicitly agree. The recommended approach
 | Mistral | `MISTRAL_API_KEY` |
 | OpenAI-compatible | `CODEDOC_COMPAT_API_KEY` (+ base URL) |
 
-Environment overrides: `CODEDOC_BACKEND`, `CODEDOC_PROVIDER`, `CODEDOC_FAST_MODEL`, `CODEDOC_SMART_MODEL`, `CODEDOC_BASE_URL`, `CODEDOC_HOME`.
+Environment overrides: `CODEDOC_BACKEND`, `CODEDOC_PROVIDER`, `CODEDOC_FAST_MODEL`, `CODEDOC_SMART_MODEL`, `CODEDOC_BASE_URL`, `CODEDOC_HOME` (settings/cache folder), `CODEDOC_PLAIN`, `CODEDOC_GOOGLE_CREDENTIALS`.
 
 **Two models?** The *fast* model summarises every file, so it makes many calls and should be a cheap model. The *smart* model reasons over the whole system once per document, so it should be your strongest model. You can use the same model for both.
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `'codedoc' is not recognized ...` | The Scripts folder is not on `PATH`. Use `python -m codedoc`, or follow [Running on Windows](#running-on-windows). |
+| `git clone` / `pip install git+...` fails with error **400** or **404** | The repository URL is wrong. Check it has no placeholders: `https://github.com/vipulraut-coditas/code-to-doc.git`. For a private repo, make sure Git can log in to it. |
+| *Claude Code not found* or *installed but could not answer* | Install [Claude Code](https://docs.claude.com/en/docs/claude-code/overview), run `claude` once in a terminal and log in, then run `codedoc` again. |
+| The progress bar repeats itself as duplicate lines | Some terminals redraw badly. Use `--plain` or set `CODEDOC_PLAIN=1` for plain log lines. |
+| Runs are slow | Analyse more files in parallel: answer the wizard question *"How many files should be analysed in parallel?"* with a higher number (1-16), or pass `--concurrency`. Too high may hit provider rate limits. File summaries are cached, so re-runs only pay for changed files (`--no-cache` disables this). |
 
 ## How it works
 
@@ -139,7 +262,7 @@ START → scan → summarize_file ×N → group_modules → summarize_module ×M
 1. **scan** walks the repo, respects `.gitignore`, skips `node_modules`, builds, lock files and binaries, and **never reads secrets** (`.env`, keys, credentials). It detects the tech stack and ranks files by business value (README, routes, models and services before tests).
 2. **summarize_file** runs in parallel with LangGraph `Send` (map step). Results are cached by file hash, so a re-run only pays for changed files.
 3. **summarize_module** merges file summaries into feature areas (reduce step).
-4. **write_document** runs once per chosen document, in parallel, with a document-specific prompt and schema (the SRS gets actors, FR/NFR with priority, confidence and sources; the API doc gets endpoints, parameters and data models; and so on). The structured result is rendered to Markdown deterministically, without an LLM. If one document fails, the others are still written.
+4. **write_document** runs once per chosen document, in parallel, with a document-specific prompt and schema (the SRS gets actors, FR/NFR with priority, confidence and sources; the API doc gets endpoints, parameters and data models; and so on). The structured result is rendered to Markdown deterministically, without an LLM, and then converted to the chosen formats. If one document fails, the others are still written.
 
 Summaries capture both the business view and technical facts (endpoints, public interfaces, configuration, dependencies), so every document type is written from the same single pass over the code.
 
