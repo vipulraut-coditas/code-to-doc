@@ -14,7 +14,6 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import find_dotenv, load_dotenv
 from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
@@ -23,7 +22,8 @@ from codedoc import __version__
 from codedoc.config import BACKEND_API, BACKEND_CLAUDE_CODE, Settings, apply_env_overrides, load_settings
 from codedoc.doctypes import DOC_TYPE_IDS, parse_doc_types
 from codedoc.formats import FORMAT_IDS, GoogleSetupError, get_format, needs_output_dir, parse_formats
-from codedoc.llm import LLMConfigError
+from codedoc.llm import LLMConfigError, resolve_api_key
+from codedoc.providers import PROVIDERS, get_provider
 
 console = Console()
 
@@ -34,6 +34,19 @@ def _as_arg(parse):
             return parse(value)
         except ValueError as exc:
             raise argparse.ArgumentTypeError(str(exc)) from None
+    return convert
+
+
+def _int_in_range(low: int, high: int | None = None):
+    def convert(value: str) -> int:
+        try:
+            number = int(value)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"'{value}' is not a whole number") from None
+        if number < low or (high is not None and number > high):
+            raise argparse.ArgumentTypeError(f"must be {low} or more" if high is None else
+                                             f"must be between {low} and {high}")
+        return number
     return convert
 
 
@@ -57,11 +70,11 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument("-o", "--output-dir", help="folder for the .md / .docx files (default: <repo>/docs)")
     gen.add_argument("--gdrive-folder", help="Google Drive folder id for Google Docs output (default: My Drive)")
     gen.add_argument("--backend", choices=[BACKEND_API, BACKEND_CLAUDE_CODE])
-    gen.add_argument("--provider", help="anthropic, openai, xai, google_genai, groq, ollama, compat, ...")
+    gen.add_argument("--provider", help=f"one of: {', '.join(p.id for p in PROVIDERS)}")
     gen.add_argument("--fast-model")
     gen.add_argument("--smart-model")
-    gen.add_argument("--max-files", type=int)
-    gen.add_argument("--concurrency", type=int)
+    gen.add_argument("--max-files", type=_int_in_range(1), help="cap on files analysed (1 or more)")
+    gen.add_argument("--concurrency", type=_int_in_range(1, 16), help="parallel LLM calls (1-16)")
     gen.add_argument("--no-cache", action="store_true", help="ignore cached file summaries")
     gen.add_argument("--plain", action="store_true",
                      help="log lines only, no live progress bar (CI, or terminals that redraw badly)")
@@ -166,19 +179,29 @@ def cmd_generate(args: argparse.Namespace) -> int:
     settings = apply_env_overrides(load_settings() or Settings())
     for attr in ("backend", "provider", "fast_model", "smart_model", "max_files", "concurrency"):
         value = getattr(args, attr)
-        if value:
+        if value is not None:
             setattr(settings, attr, value)
     if not settings.is_complete():
         console.print("[red]LLM is not configured.[/] Run [bold]codedoc setup[/] or pass "
                       "--backend/--provider/--fast-model/--smart-model.")
         return 2
+    _ask_missing_api_key(settings)
     output_dir = Path(args.output_dir) if args.output_dir else None
     return run_generation(args.repo, args.doc, output_dir, settings, use_cache=not args.no_cache, plain=args.plain,
                           formats=args.format, google_folder=args.gdrive_folder)
 
 
+def _ask_missing_api_key(settings: Settings) -> None:
+    """No key in the saved settings or the environment: ask for it in the terminal (not in CI)."""
+    if settings.backend != BACKEND_API or not sys.stdin.isatty():
+        return
+    if get_provider(settings.provider).key_env and not resolve_api_key(settings):
+        from codedoc.wizard import ensure_api_key
+
+        ensure_api_key(settings)
+
+
 def main(argv: list[str] | None = None) -> int:
-    load_dotenv(find_dotenv(usecwd=True))  # lets users keep API keys in a local .env file
     args = build_parser().parse_args(argv)
     try:
         if args.command == "setup":
@@ -191,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         console.print("\n[yellow]Cancelled.[/]")
         return 130
-    except (LLMConfigError, FileNotFoundError, GoogleSetupError) as exc:
+    except (LLMConfigError, FileNotFoundError, GoogleSetupError, ValueError) as exc:
         console.print(f"[red]Error:[/] {escape(str(exc))}")
         return 2
 

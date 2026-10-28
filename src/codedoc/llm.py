@@ -49,10 +49,6 @@ def build_llm(settings: Settings, role: str) -> BaseChatModel:
             f"No API key for {provider.label}. Set the {provider.key_env} environment "
             f"variable or run `codedoc setup`."
         )
-    if key and provider.key_env:
-        # Every LangChain integration reads its own standard env var.
-        os.environ[provider.key_env] = key
-
     if provider.id == "compat":
         from langchain_openai import ChatOpenAI
 
@@ -63,6 +59,8 @@ def build_llm(settings: Settings, role: str) -> BaseChatModel:
     from langchain.chat_models import init_chat_model
 
     kwargs = dict(provider.extra_kwargs)
+    if key and provider.key_env:
+        kwargs["api_key"] = key  # passed to the client only; child processes never see it
     base_url = settings.base_url or provider.default_base_url
     if base_url:
         kwargs["base_url"] = base_url

@@ -32,7 +32,7 @@ def invoke_structured(llm: BaseChatModel, prompt: str, schema: type[T], *,
         reply = message_text(llm.invoke(messages))
         try:
             return schema.model_validate(extract_json(reply))
-        except (ValueError, ValidationError) as exc:
+        except (ValueError, ValidationError, RecursionError) as exc:  # RecursionError: absurdly nested JSON
             last_error = exc
             messages += [AIMessage(content=reply),
                          HumanMessage(content=FIX_JSON.format(error=str(exc)[:800]))]

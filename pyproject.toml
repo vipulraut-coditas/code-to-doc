@@ -19,7 +19,6 @@ dependencies = [
     "questionary>=2.0",
     "rich>=13.7",
     "pathspec>=0.12",
-    "python-dotenv>=1.0",
     "python-docx>=1.1",
     "markdown-it-py>=3.0",
 ]

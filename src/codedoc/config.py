@@ -59,8 +59,26 @@ def load_settings(path: Path | None = None) -> Settings | None:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    known = {f.name for f in fields(Settings)}
-    return Settings(**{k: v for k, v in data.items() if k in known})
+    if not isinstance(data, dict):
+        return None
+    defaults = Settings()
+    values = {}
+    for f in fields(Settings):
+        value = data.get(f.name)
+        if value is None:
+            continue
+        default = getattr(defaults, f.name)
+        if isinstance(default, int):  # a hand-edited "4" or "abc" must not crash every run
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                continue
+            if value < 1:
+                continue
+        elif not isinstance(value, str):
+            continue
+        values[f.name] = value
+    return Settings(**values)
 
 
 def save_settings(settings: Settings, *, include_api_key: bool = False, path: Path | None = None) -> Path:
