@@ -224,7 +224,7 @@ The first run opens your browser to sign in. The token is saved to `~/.codedoc/g
 ## Configuration
 
 Settings are saved to `~/.codedoc/config.json` (on Windows: `C:\Users\<you>\.codedoc\config.json`).
-API keys are **not** saved unless you explicitly agree. The recommended approach is to put the key in an environment variable or in a `.env` file in the folder where you run `codedoc`:
+API keys are **not** saved unless you explicitly agree. If no key is found, codedoc asks for it in the terminal (hidden input) when the run starts, and offers to save it with the other settings; change it later with `codedoc setup`. For CI, set the key as an environment variable in the shell or pipeline secrets. codedoc does **not** read `.env` files, so a repository you document can never change its settings:
 
 | Provider | Key variable |
 |---|---|
@@ -237,7 +237,9 @@ API keys are **not** saved unless you explicitly agree. The recommended approach
 | Mistral | `MISTRAL_API_KEY` |
 | OpenAI-compatible | `CODEDOC_COMPAT_API_KEY` (+ base URL) |
 
-Environment overrides: `CODEDOC_BACKEND`, `CODEDOC_PROVIDER`, `CODEDOC_FAST_MODEL`, `CODEDOC_SMART_MODEL`, `CODEDOC_BASE_URL`, `CODEDOC_HOME` (settings/cache folder), `CODEDOC_PLAIN`, `CODEDOC_GOOGLE_CREDENTIALS`.
+Environment overrides: `CODEDOC_BACKEND`, `CODEDOC_PROVIDER`, `CODEDOC_FAST_MODEL`, `CODEDOC_SMART_MODEL`, `CODEDOC_BASE_URL`, `CODEDOC_HOME` (settings/cache folder), `CODEDOC_PLAIN`, `CODEDOC_GOOGLE_CREDENTIALS`, `CODEDOC_CLONE_TIMEOUT` (seconds, default 600).
+
+If a `.md` or `.docx` with the same name already exists in the output folder, it is kept as `<NAME>.backup-<date>-<time>.md` before the new file is written.
 
 **Two models?** The *fast* model summarises every file, so it makes many calls and should be a cheap model. The *smart* model reasons over the whole system once per document, so it should be your strongest model. You can use the same model for both.
 
@@ -259,7 +261,7 @@ START → scan → summarize_file ×N → group_modules → summarize_module ×M
                    cached)                                                                    one per chosen document)
 ```
 
-1. **scan** walks the repo, respects `.gitignore`, skips `node_modules`, builds, lock files and binaries, and **never reads secrets** (`.env`, keys, credentials). It detects the tech stack and ranks files by business value (README, routes, models and services before tests).
+1. **scan** walks the repo, respects `.gitignore`, skips `node_modules`, builds, lock files and binaries, and **never reads secrets** (`.env`, keys, credentials, service-account and kubeconfig files). Passwords, tokens and keys found inside ordinary files are replaced with `[REDACTED]` before anything is sent to the LLM. It detects the tech stack and ranks files by business value (README, routes, models and services before tests).
 2. **summarize_file** runs in parallel with LangGraph `Send` (map step). Results are cached by file hash, so a re-run only pays for changed files.
 3. **summarize_module** merges file summaries into feature areas (reduce step).
 4. **write_document** runs once per chosen document, in parallel, with a document-specific prompt and schema (the SRS gets actors, FR/NFR with priority, confidence and sources; the API doc gets endpoints, parameters and data models; and so on). The structured result is rendered to Markdown deterministically, without an LLM, and then converted to the chosen formats. If one document fails, the others are still written.
