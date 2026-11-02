@@ -8,16 +8,16 @@ from __future__ import annotations
 from collections import OrderedDict
 
 from codedoc.schemas import APIDocumentation, DesignDocument, SRSDocument, TechnicalDocument, UserManual
-from codedoc.text import md_cell
+from codedoc.text import md_cell, md_safe
 
 
 def _bullets(items: list[str], empty: str = "_None identified._") -> str:
-    items = [i for i in items if str(i).strip()]
+    items = [md_safe(i, single_line=True) for i in items if str(i).strip()]
     return "\n".join(f"- {i}" for i in items) if items else empty
 
 
 def _numbered(items: list[str], empty: str = "_None identified._") -> str:
-    items = [i for i in items if str(i).strip()]
+    items = [md_safe(i, single_line=True) for i in items if str(i).strip()]
     return "\n".join(f"{n}. {i}" for n, i in enumerate(items, 1)) if items else empty
 
 

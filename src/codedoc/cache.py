@@ -27,6 +27,8 @@ class SummaryCache:
                 self._data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 self._data = {}
+            if not isinstance(self._data, dict):  # damaged cache file: start over
+                self._data = {}
 
     @classmethod
     def for_repo(cls, repo: str, model_id: str, enabled: bool = True) -> "SummaryCache":

@@ -13,8 +13,10 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import IO, Any
 
@@ -66,12 +68,17 @@ def needs_output_dir(formats: list[str]) -> bool:
 
 
 # ---------------------------------------------------------------- Markdown -> Word
+# characters XML 1.0 (and so python-docx) cannot store; a model reply containing one would lose the .docx
+_XML_INVALID = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+
+
 def markdown_to_docx(markdown: str, target: str | Path | IO[bytes], title: str = "") -> None:
     """Convert the Markdown our renderers produce (headings, lists, tables, code, quotes) to .docx."""
     from docx import Document
     from docx.shared import Pt
     from markdown_it import MarkdownIt
 
+    markdown, title = _XML_INVALID.sub("", markdown), _XML_INVALID.sub("", title)
     doc = Document()
     if title:
         doc.core_properties.title = title
@@ -248,6 +255,10 @@ def google_authorize():
                                       success_message="codedoc is signed in to Google. You can close this tab.")
     token.parent.mkdir(parents=True, exist_ok=True)
     token.write_text(creds.to_json(), encoding="utf-8")
+    try:
+        os.chmod(token, 0o600)  # refresh token: owner only (best effort; no-op on Windows)
+    except OSError:
+        pass
     return creds
 
 
@@ -273,6 +284,20 @@ def upload_to_google_docs(creds, title: str, docx_bytes: bytes, folder_id: str |
 
 
 # ---------------------------------------------------------------- export one document
+def _backup_existing(path: Path) -> str | None:
+    """Rename an existing file to ``<stem>.backup-<timestamp><ext>`` so it is never silently lost."""
+    if not path.exists():
+        return None
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = path.with_name(f"{path.stem}.backup-{stamp}{path.suffix}")
+    n = 1
+    while backup.exists():
+        n += 1
+        backup = path.with_name(f"{path.stem}.backup-{stamp}-{n}{path.suffix}")
+    path.replace(backup)
+    return f"Existing {path.name} was kept as {backup.name}"
+
+
 def export_document(markdown: str, *, formats: list[str], output_dir: Path | None, filename: str,
                     title: str, google_creds=None, google_folder: str | None = None) -> tuple[dict[str, str], list[str]]:
     """Write/upload one document in every chosen format.
@@ -287,10 +312,14 @@ def export_document(markdown: str, *, formats: list[str], output_dir: Path | Non
         try:
             if fmt.id == "md":
                 path = output_dir / f"{stem}.md"
+                if note := _backup_existing(path):
+                    warnings.append(note)
                 path.write_text(markdown, encoding="utf-8")
                 outputs[fmt.id] = str(path)
             elif fmt.id == "docx":
                 path = output_dir / f"{stem}.docx"
+                if note := _backup_existing(path):
+                    warnings.append(note)
                 markdown_to_docx(markdown, path, title=title)
                 outputs[fmt.id] = str(path)
             elif fmt.id == "gdoc":

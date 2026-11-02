@@ -23,8 +23,6 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from codedoc.text import message_text
 
 _STDIN_INSTRUCTION = "Follow the instructions provided via stdin."
-# Newer CLI versions support these flags; older ones are retried without them.
-_LEGACY_CLI = False
 _WORKDIR: str | None = None
 
 
@@ -61,22 +59,17 @@ def _parse_output(stdout: str) -> dict:
 
 def run_claude(prompt: str, *, model: str | None, system: str | None,
                claude_path: str, timeout: int) -> str:
-    global _LEGACY_CLI
-    if not _LEGACY_CLI:
-        cmd = [claude_path, "-p", _STDIN_INSTRUCTION, "--output-format", "json",
-               "--tools", "", "--no-session-persistence"]
-        if system:
-            # one line: newlines inside arguments break Windows .cmd launchers
-            cmd += ["--system-prompt", " ".join(system.split())]
-        stdin = prompt
-    else:
-        cmd = [claude_path, "-p", _STDIN_INSTRUCTION, "--output-format", "json"]
-        stdin = f"[SYSTEM]\n{system}\n\n{prompt}" if system else prompt
+    # --tools "" keeps repository text away from a tool-enabled agent; there is no fallback without it.
+    cmd = [claude_path, "-p", _STDIN_INSTRUCTION, "--output-format", "json",
+           "--tools", "", "--no-session-persistence"]
+    if system:
+        # one line: newlines inside arguments break Windows .cmd launchers
+        cmd += ["--system-prompt", " ".join(system.split())]
     if model:
         cmd += ["--model", model]
 
     try:
-        proc = subprocess.run(cmd, input=stdin, capture_output=True, text=True,
+        proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
                               encoding="utf-8", errors="replace",
                               timeout=timeout, cwd=_empty_workdir())
     except subprocess.TimeoutExpired as exc:
@@ -84,10 +77,9 @@ def run_claude(prompt: str, *, model: str | None, system: str | None,
     except FileNotFoundError as exc:
         raise ClaudeCLIError(f"Claude Code executable not found: {claude_path}") from exc
 
-    if proc.returncode != 0 and not _LEGACY_CLI and "unknown option" in proc.stderr.lower():
-        _LEGACY_CLI = True
-        return run_claude(prompt, model=model, system=system,
-                          claude_path=claude_path, timeout=timeout)
+    if proc.returncode != 0 and "unknown option" in proc.stderr.lower():
+        raise ClaudeCLIError("Your Claude Code version is too old (it does not support --tools). "
+                             "Update it with `claude update` and try again.")
 
     if not proc.stdout.strip():
         raise ClaudeCLIError((proc.stderr or "Claude Code returned no output").strip()[:500])

@@ -93,7 +93,7 @@ Design Doc हे सगळे त्याच module summaries वरून ल
 ## ६. Security
 
 - `.env`, `*.pem`, `*secret*`, `*credential*` अशा files कधीच LLM कडे पाठवल्या जात नाहीत.
-- API key फक्त user ने "हो" म्हटलं तरच save होते. नाहीतर environment variable किंवा `.env` वापरा.
+- API key फक्त user ने "हो" म्हटलं तरच save होते. नाहीतर run सुरू होताना terminal मध्ये key विचारली जाते, किंवा environment variable वापरा (`.env` file वाचली जात नाही).
 
 ---
 

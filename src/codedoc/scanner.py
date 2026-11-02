@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -24,7 +25,55 @@ IGNORED_DIRS = {
 SECRET_PATTERNS = [
     ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "id_rsa*", "id_ed25519*",
     "*secret*", "*credential*", ".npmrc", ".pypirc", "*.tfstate", "*.tfvars",
+    "*service-account*.json", "*service_account*.json", "*serviceaccount*.json", "*adminsdk*.json",
+    "kubeconfig*", "*.kubeconfig", "wp-config.php",
 ]
+
+# Secret VALUES inside ordinary files are replaced before anything is sent to the LLM.
+REDACTED = "[REDACTED]"
+_AWS_KEY = re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")
+_PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----(?:.*?-----END [A-Z ]*PRIVATE KEY-----|[^\"'\n]*)",
+                          re.DOTALL)
+_URL_PASSWORD = re.compile(r"(://[^/\s:@\"']+:)([^/\s@\"']+)(@)")
+_CONN_PASSWORD = re.compile(r"(?i)((?:^|[;\"'])\s*(?:password|pwd)\s*=\s*)([^;\"'\s]+)", re.MULTILINE)
+# bounded and anchored at a name boundary: unbounded [\w.-]* backtracks for minutes on long minified lines
+_SECRET_KEY_NAME = (r"(?<![\w.-])[\w.-]{0,40}?(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key"
+                    r"|private[_-]?key|auth[_-]?key)[\w.-]{0,40}")
+_QUOTED_ASSIGN = re.compile(r"(?i)([\"']?" + _SECRET_KEY_NAME + r"[\"']?\s*(?::=|=>|=|:)\s*)"
+                            r"(\"[^\"\n]*\"|'[^'\n]*')")
+_BARE_ASSIGN = re.compile(r"(?im)^(\s*-?\s*[\"']?" + _SECRET_KEY_NAME + r"[\"']?\s*(?:=|:)[ \t]*)"
+                          r"([^\s\"'#][^\s\"']*)(?=[ \t\r]*$)")
+_CONFIG_LANGUAGES = {"YAML", "TOML", "JSON", "XML", "INI", "Docker", "Terraform", "Procfile"}
+
+
+def _looks_like_secret(value: str) -> bool:
+    """False for empty values, placeholders, references and ordinary words, so documentation input stays intact."""
+    if len(value) < 6 or any(c in value for c in "()[]{}$<>%") or any(c.isspace() for c in value):
+        return False
+    if value.lower().startswith(("http://", "https://", "/", "./", "os.", "process.", "env.", "settings.")):
+        return False
+    if value.isdigit() or (value.isalpha() and len(value) <= 10):
+        return False
+    return value.lower() not in {"none", "null", "true", "false", "changeme", "required", "optional"}
+
+
+def _redact_value(match: re.Match) -> str:
+    raw = match.group(2)
+    quote = raw[0] if raw[:1] in {"'", '"'} else ""
+    inner = raw[1:-1] if quote else raw
+    return match.group(1) + (quote + REDACTED + quote if _looks_like_secret(inner) else raw)
+
+
+def redact_secrets(text: str, language: str = "") -> str:
+    """Replace secret-looking values (keys, passwords, tokens) with ``[REDACTED]``; code itself is untouched."""
+    text = _AWS_KEY.sub(REDACTED, text)
+    text = _PRIVATE_KEY.sub(REDACTED, text)
+    text = _URL_PASSWORD.sub(lambda m: m.group(1) + REDACTED + m.group(3), text)
+    text = _CONN_PASSWORD.sub(_redact_value, text)
+    text = _QUOTED_ASSIGN.sub(_redact_value, text)
+    if language in _CONFIG_LANGUAGES:  # in code, a bare value is a variable name, not a secret
+        text = _BARE_ASSIGN.sub(_redact_value, text)
+    return text
 SECRET_ALLOW = {".env.example", ".env.sample", ".env.template"}
 
 SKIP_PATTERNS = [
@@ -242,7 +291,7 @@ def scan_repository(root: str | Path, *, max_files: int = 300, max_file_bytes: i
             continue
         if _looks_binary(raw):
             continue
-        text = raw.decode("utf-8", errors="replace")
+        text = redact_secrets(raw.decode("utf-8", errors="replace"), language)
         if rel.stem.lower() == "readme" and len(rel.parts) == 1 and not result.readme:
             result.readme = text[:8000]
         truncated = len(text) > max_chars_per_file

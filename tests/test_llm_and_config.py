@@ -57,7 +57,6 @@ def test_claude_cli_model_parses_json(monkeypatch):
         return FakeProc(stdout="warning line\n" + json.dumps({"is_error": False, "result": "hello"}))
 
     monkeypatch.setattr(llm_claude_cli, "find_claude", lambda p=None: "/usr/bin/claude")
-    monkeypatch.setattr(llm_claude_cli, "_LEGACY_CLI", False)
     monkeypatch.setattr(subprocess, "run", fake_run)
     reply = ClaudeCLIChatModel(model="haiku").invoke([("system", "be a BA"), ("human", "hi")])
     assert reply.content == "hello"
@@ -65,7 +64,7 @@ def test_claude_cli_model_parses_json(monkeypatch):
     assert "--system-prompt" in seen["cmd"] and seen["input"] == "hi"
 
 
-def test_claude_cli_falls_back_for_old_versions(monkeypatch):
+def test_claude_cli_old_version_fails_closed(monkeypatch):
     calls = []
 
     def fake_run(cmd, **kwargs):
@@ -75,15 +74,14 @@ def test_claude_cli_falls_back_for_old_versions(monkeypatch):
         return FakeProc(stdout=json.dumps({"result": "ok"}))
 
     monkeypatch.setattr(llm_claude_cli, "find_claude", lambda p=None: "claude")
-    monkeypatch.setattr(llm_claude_cli, "_LEGACY_CLI", False)
     monkeypatch.setattr(subprocess, "run", fake_run)
-    assert ClaudeCLIChatModel().invoke("x").content == "ok"
-    assert len(calls) == 2
+    with pytest.raises(ClaudeCLIError, match="claude update"):
+        ClaudeCLIChatModel().invoke("x")
+    assert len(calls) == 1  # never retried without --tools ""
 
 
 def test_claude_cli_error(monkeypatch):
     monkeypatch.setattr(llm_claude_cli, "find_claude", lambda p=None: "claude")
-    monkeypatch.setattr(llm_claude_cli, "_LEGACY_CLI", False)
     monkeypatch.setattr(subprocess, "run",
                         lambda cmd, **k: FakeProc(stdout=json.dumps({"is_error": True, "result": "Not logged in"})))
     with pytest.raises(ClaudeCLIError, match="Not logged in"):

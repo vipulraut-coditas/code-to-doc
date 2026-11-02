@@ -47,11 +47,32 @@ def extract_json(text: str) -> Any:
     raise ValueError("No valid JSON object found in the model reply")
 
 
+_CODE_SPAN = re.compile(r"(`+)(?:.*?)\1", re.DOTALL)
+_TAG_START = re.compile(r"<(?=[A-Za-z/!?])")
+
+
+def _escape_tags(text: str) -> str:
+    return _TAG_START.sub("&lt;", text)
+
+
+def md_safe(value: Any, single_line: bool = False) -> str:
+    """Neutralise raw HTML (and, for list items, injected headings) in model text; `code spans` stay as-is."""
+    text = str(value)
+    if single_line:
+        text = " ".join(text.split("\n")).replace("\r", " ")
+    out, last = [], 0
+    for m in _CODE_SPAN.finditer(text):
+        out += [_escape_tags(text[last:m.start()]), m.group(0)]
+        last = m.end()
+    out.append(_escape_tags(text[last:]))
+    return "".join(out)
+
+
 def md_cell(value: Any) -> str:
     """Make a value safe to put inside a Markdown table cell."""
     if isinstance(value, (list, tuple)):
         value = ", ".join(str(v) for v in value)
-    return str(value or "").replace("|", "\\|").replace("\r", " ").replace("\n", " ").strip()
+    return md_safe(str(value or "").replace("|", "\\|").replace("\r", " ").replace("\n", " ").strip())
 
 
 def truncate(text: str, limit: int) -> str:

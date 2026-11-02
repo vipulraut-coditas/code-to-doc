@@ -208,9 +208,7 @@ def ask_api_key(settings: Settings) -> str | None:
         f"Enter your {provider.label} API key" + (" (leave empty if not needed):" if optional else ":"),
         validate=(lambda v: True) if optional else _not_empty,
     ).unsafe_ask().strip()
-    if key:
-        os.environ[provider.key_env] = key  # this process only
-    return key or None
+    return key or None  # kept in Settings.api_key only, never copied into os.environ
 
 
 def _api_settings(previous: Settings | None, provider_id: str | None = None) -> tuple[Settings, str | None] | None:
@@ -346,8 +344,6 @@ def ensure_api_key(settings: Settings) -> None:
     if not provider.key_env or provider.id == "compat":
         return
     if settings.api_key or os.environ.get(provider.key_env):
-        if settings.api_key:
-            os.environ[provider.key_env] = settings.api_key
         return
     console.print(f"[yellow]![/] No API key found for {provider.label} ({provider.key_env}).")
     settings.api_key = ask_api_key(settings)
